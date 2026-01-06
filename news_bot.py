@@ -1,113 +1,144 @@
 import os
-import requests
+import json
 from datetime import datetime
-from news_scraper import NewsScraper
-from config import BALE_API_URL, MAX_MESSAGE_LENGTH
+import pytz
+import jdatetime
+from news_scraper import NewsAggregator
+from bale import Bot
 
+def load_users():
+    """بارگذاری لیست کاربران"""
+    try:
+        if os.path.exists('users.json'):
+            with open('users.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return []
 
-class BaleNewsBot:
-    def __init__(self, token, chat_id):
-        self.token = token
-        self.chat_id = chat_id
-        self.scraper = NewsScraper()
+def load_sent_news():
+    """بارگذاری اخبار ارسال‌شده"""
+    try:
+        if os.path.exists('news_archive.json'):
+            with open('news_archive.json', 'r', encoding='utf-8') as f:
+                return json.load(f)
+    except:
+        pass
+    return []
+
+def save_sent_news(news_list):
+    """ذخیره اخبار ارسال‌شده"""
+    try:
+        with open('news_archive.json', 'w', encoding='utf-8') as f:
+            json.dump(news_list, f, ensure_ascii=False, indent=2)
+        print("✅ آرشیو ذخیره شد")
+        return True
+    except Exception as e:
+        print(f"❌ خطا در ذخیره: {e}")
+        return False
+
+def get_date_header():
+    """تولید هدر تاریخ"""
+    now_jalali = jdatetime.datetime.now()
+    jalali_date = now_jalali.strftime('%Y/%m/%d')
     
-    def send_message(self, text):
-        """ارسال پیام به بله"""
-        url = BALE_API_URL.format(token=self.token, method='sendMessage')
+    now_gregorian = datetime.now(pytz.timezone('Asia/Tehran'))
+    gregorian_date = now_gregorian.strftime('%Y/%m/%d')
+    
+    return (
+        f"🗓 *تاریخ امروز*\n"
+        f"📅 شمسی: {jalali_date}\n"
+        f"📅 میلادی: {gregorian_date}\n\n"
+    )
+
+def format_news_message(news_list):
+    """فرمت پیام خبری"""
+    message = "🌅 *صبح به‌خیر!*\n\n"
+    message += get_date_header()
+    
+    if not news_list:
+        message += (
+            "📰 امروز خبر جدیدی در منابع یافت نشد.\n\n"
+            "🔄 فردا دوباره بررسی می‌کنیم!"
+        )
+    else:
+        message += f"📰 *{len(news_list)} خبر جدید از صنعت گاز:*\n\n"
         
-        # تقسیم پیام‌های طولانی
-        if len(text) > MAX_MESSAGE_LENGTH:
-            chunks = [text[i:i+MAX_MESSAGE_LENGTH] 
-                     for i in range(0, len(text), MAX_MESSAGE_LENGTH)]
-            
-            for chunk in chunks:
-                data = {'chat_id': self.chat_id, 'text': chunk}
-                try:
-                    response = requests.post(url, json=data, timeout=30)
-                    response.raise_for_status()
-                    print(f"✅ بخشی از پیام ارسال شد")
-                except Exception as e:
-                    print(f"❌ خطا در ارسال پیام: {e}")
-            return True
-        else:
-            data = {'chat_id': self.chat_id, 'text': text}
+        for idx, news in enumerate(news_list, 1):
+            message += f"*{idx}. {news['title']}*\n"
+            message += f"   📡 منبع: {news['source']}\n"
+            message += f"   🔗 [مطالعه خبر]({news['link']})\n\n"
+    
+    now = datetime.now(pytz.timezone('Asia/Tehran'))
+    message += f"\n⏰ ساعت ارسال: {now.strftime('%H:%M')}"
+    
+    return message
+
+def main():
+    print("🚀 شروع ربات خبری...")
+    
+    token = os.getenv('BALE_TOKEN')
+    if not token:
+        print("❌ توکن پیدا نشد!")
+        return
+    
+    try:
+        bot = Bot(token=token)
+        print("✅ ربات ساخته شد")
+        
+        # بارگذاری کاربران
+        users = load_users()
+        if not users:
+            print("⚠️ هیچ کاربری ثبت‌نام نکرده!")
+            return
+        
+        print(f"👥 تعداد کاربران: {len(users)}")
+        
+        # جمع‌آوری اخبار
+        print("🔍 جستجوی اخبار...")
+        aggregator = NewsAggregator()
+        all_news = aggregator.get_all_news()
+        print(f"📊 تعداد کل اخبار: {len(all_news)}")
+        
+        # فیلتر اخبار جدید
+        sent_news = load_sent_news()
+        sent_links = {news['link'] for news in sent_news}
+        new_news = [news for news in all_news if news['link'] not in sent_links]
+        print(f"🆕 اخبار جدید: {len(new_news)}")
+        
+        # آماده‌سازی پیام
+        message_text = format_news_message(new_news)
+        
+        # ارسال به همه کاربران
+        success_count = 0
+        for user_id in users:
             try:
-                response = requests.post(url, json=data, timeout=30)
-                response.raise_for_status()
-                print(f"✅ پیام با موفقیت ارسال شد")
-                return response.json()
+                bot.send_message(
+                    chat_id=user_id,
+                    text=message_text,
+                    parse_mode='markdown'
+                )
+                success_count += 1
+                print(f"✅ ارسال به {user_id}")
             except Exception as e:
-                print(f"❌ خطا در ارسال پیام: {e}")
-                return None
-    
-    def format_news_message(self, news_list):
-        """فرمت کردن پیام خبری"""
-        if not news_list:
-            now = datetime.now().strftime("%Y-%m-%d %H:%M")
-            return f"📰 امروز خبر جدیدی در منابع یافت نشد.\n\n⏰ زمان بررسی: {now}"
+                print(f"❌ خطا در ارسال به {user_id}: {e}")
         
-        message = "🔔 *اخبار جدید صنعت گاز* 🔔\n"
-        message += "━━━━━━━━━━━━━━━━━\n\n"
+        print(f"📤 ارسال موفق: {success_count}/{len(users)}")
         
-        for i, news in enumerate(news_list, 1):
-            message += f"📌 *{i}. {news['title']}*\n"
-            message += f"🔗 {news['link']}\n"
-            message += f"📡 منبع: {news['source']}\n"
-            message += "━━━━━━━━━━━━━━━━━\n\n"
+        # به‌روزرسانی آرشیو
+        if new_news:
+            sent_news.extend(new_news)
+            # نگه‌داری 1000 خبر آخر
+            if len(sent_news) > 1000:
+                sent_news = sent_news[-1000:]
+            save_sent_news(sent_news)
         
-        message += f"✅ تعداد کل: {len(news_list)} خبر"
+        print("🎉 کار تمام شد!")
         
-        return message
-    
-    def run(self):
-        """اجرای ربات"""
-        print("🚀 شروع اسکرپ اخبار...")
-        
-        try:
-            # اسکرپ اخبار
-            news_list = self.scraper.scrape_all()
-            
-            if not news_list:
-                print("ℹ️ خبر جدیدی برای ارسال وجود ندارد")
-                # حتی اگه خبر نباشه، پیام بده
-                message = self.format_news_message([])
-                self.send_message(message)
-                print("✅ پیام عدم وجود خبر ارسال شد")
-                return
-            
-            print(f"📊 {len(news_list)} خبر جدید یافت شد")
-            
-            # فرمت و ارسال پیام
-            message = self.format_news_message(news_list)
-            result = self.send_message(message)
-            
-            if result:
-                # علامت‌گذاری اخبار به عنوان ارسال شده
-                for news in news_list:
-                    self.scraper.mark_as_sent(news['id'], news)
-                print("✅ اخبار با موفقیت ارسال و ذخیره شد")
-            else:
-                print("⚠️ پیام ارسال شد اما مشکلی در پاسخ وجود دارد")
-                
-        except Exception as e:
-            print(f"❌ خطای کلی: {e}")
-            error_msg = f"⚠️ خطا در اجرای ربات:\n{str(e)}"
-            self.send_message(error_msg)
-
+    except Exception as e:
+        print(f"❌ خطای کلی: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
-    # دریافت توکن و شناسه چت از متغیرهای محیطی
-    TOKEN = os.getenv('BALE_TOKEN')
-    CHAT_ID = os.getenv('CHAT_ID')
-    
-    if not TOKEN or not CHAT_ID:
-        print("❌ خطا: BALE_TOKEN یا CHAT_ID تنظیم نشده است")
-        exit(1)
-    
-    print(f"🤖 ربات با CHAT_ID={CHAT_ID} شروع به کار کرد")
-    
-    # اجرای ربات
-    bot = BaleNewsBot(TOKEN, CHAT_ID)
-    bot.run()
-    
-    print("🏁 اجرای ربات به پایان رسید")
+    main()

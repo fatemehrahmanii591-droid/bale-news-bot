@@ -1,126 +1,123 @@
 import requests
 from bs4 import BeautifulSoup
-import json
-import os
 from datetime import datetime
-from config import NEWS_SOURCES, ARCHIVE_FILE
+import pytz
 
-
-class NewsDatabase:
-    def __init__(self, archive_file=ARCHIVE_FILE):
-        self.archive_file = archive_file
-        self.archive = self.load_archive()
-    
-    def load_archive(self):
-        """بارگذاری آرشیو اخبار از فایل"""
-        if os.path.exists(self.archive_file):
-            try:
-                with open(self.archive_file, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"خطا در بارگذاری آرشیو: {e}")
-                return {}
-        return {}
-    
-    def save_archive(self):
-        """ذخیره آرشیو اخبار در فایل"""
-        try:
-            with open(self.archive_file, 'w', encoding='utf-8') as f:
-                json.dump(self.archive, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            print(f"خطا در ذخیره آرشیو: {e}")
-    
-    def is_news_sent(self, news_id):
-        """بررسی ارسال شدن خبر"""
-        return news_id in self.archive
-    
-    def mark_as_sent(self, news_id, news_data):
-        """علامت‌گذاری خبر به عنوان ارسال شده"""
-        self.archive[news_id] = {
-            'title': news_data.get('title', ''),
-            'source': news_data.get('source', ''),
-            'sent_at': datetime.now().isoformat()
-        }
-        self.save_archive()
-
-
-class NewsScraper:
+class NewsAggregator:
     def __init__(self):
-        self.db = NewsDatabase()
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        self.keywords = [
+            'شرکت مهندسی و توسعه گاز ایران',
+            'شرکت ملی گاز ایران',
+            'مهندس بهنام میرزایی',
+            'میرزایی',
+            'خط لوله گاز',
+            'ایستگاه تقویت فشار گاز',
+            'صنعت گاز ایران',
+            'گاز طبیعی ایران'
+        ]
+        
+        self.sources = {
+            'مهر': 'https://www.mehrnews.com',
+            'ایسنا': 'https://www.isna.ir',
+            'ایرنا': 'https://www.irna.ir',
+            'شانا': 'https://www.shana.ir',
         }
     
-    def scrape_source(self, source_key, source_config):
-        """اسکرپ یک منبع خبری"""
+    def search_mehr_news(self):
+        """جستجو در خبرگزاری مهر"""
         news_list = []
-        
         try:
-            print(f"در حال اسکرپ {source_config['name']}...")
-            response = requests.get(
-                source_config['url'],
-                headers=self.headers,
-                timeout=30
-            )
-            response.raise_for_status()
-            
-            soup = BeautifulSoup(response.content, 'lxml')
-            selectors = source_config['selectors']
-            
-            # یافتن اخبار
-            news_items = soup.select(selectors['container'])
-            
-            for item in news_items[:5]:  # فقط 5 خبر اول
-                try:
-                    # استخراج عنوان
-                    title_elem = item.select_one(selectors['title'])
-                    title = title_elem.get_text(strip=True) if title_elem else None
+            for keyword in self.keywords[:3]:  # سه کلیدواژه اصلی
+                url = f"https://www.mehrnews.com/search?text={keyword}"
+                response = requests.get(url, timeout=10)
+                
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    articles = soup.find_all('div', class_='item', limit=5)
                     
-                    # استخراج لینک
-                    link_elem = item.select_one(selectors['link'])
-                    link = link_elem.get('href') if link_elem else None
-                    
-                    # کامل کردن لینک نسبی
-                    if link and not link.startswith('http'):
-                        base_url = '/'.join(source_config['url'].split('/')[:3])
-                        link = base_url + link if link.startswith('/') else base_url + '/' + link
-                    
-                    # ایجاد شناسه منحصر به فرد
-                    news_id = f"{source_key}_{hash(title)}"
-                    
-                    # بررسی ارسال نشده بودن
-                    if title and link and not self.db.is_news_sent(news_id):
-                        news_data = {
-                            'id': news_id,
-                            'title': title,
-                            'link': link,
-                            'source': source_config['name'],
-                            'source_key': source_key
-                        }
-                        news_list.append(news_data)
-                        
-                except Exception as e:
-                    print(f"خطا در پردازش خبر: {e}")
-                    continue
-            
-            print(f"✅ {len(news_list)} خبر جدید از {source_config['name']}")
-            
+                    for article in articles:
+                        try:
+                            title_elem = article.find('a')
+                            if title_elem:
+                                title = title_elem.get_text(strip=True)
+                                link = 'https://www.mehrnews.com' + title_elem.get('href')
+                                
+                                # چک کردن مرتبط بودن
+                                if self._is_relevant(title):
+                                    news_list.append({
+                                        'title': title,
+                                        'link': link,
+                                        'source': 'مهر',
+                                        'date': datetime.now(pytz.timezone('Asia/Tehran')).strftime('%Y-%m-%d')
+                                    })
+                        except:
+                            continue
         except Exception as e:
-            print(f"❌ خطا در اسکرپ {source_config['name']}: {e}")
+            print(f"⚠️ خطا در جستجوی مهر: {e}")
         
         return news_list
     
-    def scrape_all(self):
-        """اسکرپ همه منابع خبری"""
+    def search_isna_news(self):
+        """جستجو در خبرگزاری ایسنا"""
+        news_list = []
+        try:
+            for keyword in self.keywords[:3]:
+                url = f"https://www.isna.ir/search?search={keyword}"
+                response = requests.get(url, timeout=10)
+                
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    articles = soup.find_all('div', class_='news-img-desc', limit=5)
+                    
+                    for article in articles:
+                        try:
+                            title_elem = article.find('a')
+                            if title_elem:
+                                title = title_elem.get('title', '')
+                                link = 'https://www.isna.ir' + title_elem.get('href')
+                                
+                                if self._is_relevant(title):
+                                    news_list.append({
+                                        'title': title,
+                                        'link': link,
+                                        'source': 'ایسنا',
+                                        'date': datetime.now(pytz.timezone('Asia/Tehran')).strftime('%Y-%m-%d')
+                                    })
+                        except:
+                            continue
+        except Exception as e:
+            print(f"⚠️ خطا در جستجوی ایسنا: {e}")
+        
+        return news_list
+    
+    def _is_relevant(self, text):
+        """بررسی مرتبط بودن عنوان"""
+        text_lower = text.lower()
+        relevant_words = ['گاز', 'میرزایی', 'خط لوله', 'ایستگاه', 'شرکت ملی']
+        return any(word in text_lower for word in relevant_words)
+    
+    def get_all_news(self):
+        """جمع‌آوری از تمام منابع"""
+        print("🔍 شروع جستجو در منابع...")
         all_news = []
         
-        for source_key, source_config in NEWS_SOURCES.items():
-            news = self.scrape_source(source_key, source_config)
-            all_news.extend(news)
+        # جستجو در مهر
+        mehr_news = self.search_mehr_news()
+        print(f"✅ مهر: {len(mehr_news)} خبر")
+        all_news.extend(mehr_news)
         
-        return all_news
-    
-    def mark_as_sent(self, news_id, news_data):
-        """علامت‌گذاری خبر به عنوان ارسال شده"""
-        self.db.mark_as_sent(news_id, news_data)
-
+        # جستجو در ایسنا
+        isna_news = self.search_isna_news()
+        print(f"✅ ایسنا: {len(isna_news)} خبر")
+        all_news.extend(isna_news)
+        
+        # حذف تکراری‌ها
+        unique_news = []
+        seen_links = set()
+        for news in all_news:
+            if news['link'] not in seen_links:
+                seen_links.add(news['link'])
+                unique_news.append(news)
+        
+        print(f"📊 مجموع اخبار یکتا: {len(unique_news)}")
+        return unique_news

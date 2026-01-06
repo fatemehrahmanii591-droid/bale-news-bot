@@ -283,5 +283,6 @@ class NewsScraper:
         print("در حال اسکرپ از شرکت ملی گاز...")
         all_news.extend(self.scrape_nigc())
         
+        
         self.save_archive()
         return all_news

@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 import pytz
 import jdatetime
-from news_scraper import NewsAggregator
+from news_scraper import NewsScraper
 from bale import Bot
 
 def load_users():
@@ -67,7 +67,7 @@ def format_news_message(news_list):
         for idx, news in enumerate(news_list, 1):
             message += f"*{idx}. {news['title']}*\n"
             message += f"   📡 منبع: {news['source']}\n"
-            message += f"   🔗 [مطالعه خبر]({news['link']})\n\n"
+            message += f"   🔗 [مطالعه خبر]({news['url']})\n\n"
     
     now = datetime.now(pytz.timezone('Asia/Tehran'))
     message += f"\n⏰ ساعت ارسال: {now.strftime('%H:%M')}"
@@ -96,14 +96,14 @@ def main():
         
         # جمع‌آوری اخبار
         print("🔍 جستجوی اخبار...")
-        aggregator = NewsAggregator()
-        all_news = aggregator.get_all_news()
+        scraper = NewsScraper()
+        all_news = scraper.get_all_news()
         print(f"📊 تعداد کل اخبار: {len(all_news)}")
         
         # فیلتر اخبار جدید
         sent_news = load_sent_news()
-        sent_links = {news['link'] for news in sent_news}
-        new_news = [news for news in all_news if news['link'] not in sent_links]
+        sent_urls = {news.get('url', news.get('link', '')) for news in sent_news}
+        new_news = [news for news in all_news if news['url'] not in sent_urls]
         print(f"🆕 اخبار جدید: {len(new_news)}")
         
         # آماده‌سازی پیام
